@@ -1,8 +1,8 @@
 name: Capstone Project Services- GCP Deployment
-on:  push
+on: push
 
 jobs:
-   deploy:
+  deploy:
     runs-on: ubuntu-latest
 
     env:
@@ -15,62 +15,68 @@ jobs:
       IMAGE_NAME: vm-services-seed-boot-image
 
     permissions:
-        contents: 'read'
-        id-token: 'write'
+      contents: 'read'
+      id-token: 'write'
 
     steps:
-       - name: Authenticate to Google Cloud
-         uses: google-github-actions/auth@v3
-         with:
-           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
-           service_account: ${{ secrets.GCP_SA_EMAIL }}
-           project_id: ${{ secrets.GCP_PROJECT_ID }}
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-       - name: Set up gcloud Cloud SDK environment
-         uses: google-github-actions/setup-gcloud@v3.0.1
+      - name: Set up gcloud Cloud SDK environment
+        uses: google-github-actions/setup-gcloud@v3.0.1
 
-       - name: Start the vm-services-seed instance
-         run: gcloud compute instances start ${{ env.VM_NAME }} --zone=${{ env.ZONE }}
+      - name: Get Dynamic VM Name and Start Instance
+        run: |
+          # This command finds the actual name (e.g., mig-services-mj51) from your group
+          ACTUAL_NAME=$(gcloud compute instance-groups managed list-instances ${{ env.INSTANCE_GROUP }} \
+            --region=${{ env.REGION }} \
+            --format="value(instance.scope().basename())" \
+            --limit=1)
+          
+          echo "Detected VM Name: $ACTUAL_NAME"
+          
+          # This line updates the VM_NAME for all following steps in this job
+          echo "VM_NAME=$ACTUAL_NAME" >> $GITHUB_ENV
+          
+          # Now start that specific instance
+          gcloud compute instances start $ACTUAL_NAME --zone=${{ env.ZONE }}
 
-       - name: Connect with the vm-services-seed instance through SSH, pull the latest code and build the project
-         run: > 
-           gcloud compute ssh ${{ env.USER_NAME }}@${{env.VM_NAME }} --zone=${{ env.ZONE }}
-           --command "echo 'Connected to vm-services-seed successfully!' &&
-           cd Capstone-Project-Services/ &&
-           git pull --recurse-submodules &&
-           source ~/.bashrc &&
-           mvn clean package
-           "
+      - name: Connect with the VM through SSH, pull the latest code and build
+        run: >
+          gcloud compute ssh ${{ env.USER_NAME }}@${{ env.VM_NAME }} --zone=${{ env.ZONE }}
+          --command "echo 'Connected successfully!' &&
+          cd Capstone-Project-Services/ &&
+          git pull --recurse-submodules &&
+          source ~/.bashrc &&
+          mvn clean package
+          "
 
-       - name: Stop the vm-services-seed  instance
-         run: gcloud compute instances stop ${{ env.VM_NAME }} --zone=${{ env.ZONE }}
+      - name: Stop the VM instance
+        run: gcloud compute instances stop ${{ env.VM_NAME }} --zone=${{ env.ZONE }}
 
-       - name: Delete the boot disk image
-         run: gcloud compute images delete ${{ env.IMAGE_NAME }}
-         continue-on-error: true
+      - name: Delete the old boot disk image
+        run: gcloud compute images delete ${{ env.IMAGE_NAME }} --quiet
+        continue-on-error: true
 
-       - name: Create a new boot disk image with the previous image name
-         run: |
-               gcloud compute images create ${{ env.IMAGE_NAME}}  \
-                --project=hdse-capstone \
-                --source-disk=${{ env.VM_NAME }} \
-                --source-disk-zone=${{ env.ZONE }} \
-                --storage-location=${{ env.REGION }} 
+      - name: Create a new boot disk image
+        run: |
+          gcloud compute images create ${{ env.IMAGE_NAME }} \
+            --project=${{ secrets.GCP_PROJECT_ID }} \
+            --source-disk=${{ env.VM_NAME }} \
+            --source-disk-zone=${{ env.ZONE }} \
+            --storage-location=${{ env.REGION }}
 
-       - name: Update the instance group withe the new image
-         run: |
-               gcloud  compute instance-groups managed rolling-action start-update ${{ env.INSTANCE_GROUP }}\
-                --region=${{ env.REGION }}\
-                --type=proactive \
-                --max-unavailable=0 \
-                --minimal-action=replace \
-                --replacement-method=substitute\
-                --max-surge=3 \
-                --version=template=projects/${{ secrets.GCP_PROJECT_ID }}/regions/${{ env.REGION }}/instanceTemplates/${{ env.INSTANCE_TEMPLATE }},name=0-1774819624377
-
-
-
-
-
-
-
+      - name: Update the instance group with the new image
+        run: |
+          gcloud compute instance-groups managed rolling-action start-update ${{ env.INSTANCE_GROUP }} \
+            --region=${{ env.REGION }} \
+            --type=proactive \
+            --max-unavailable=0 \
+            --minimal-action=replace \
+            --replacement-method=substitute \
+            --max-surge=3 \
+            --version=template=projects/${{ secrets.GCP_PROJECT_ID }}/regions/${{ env.REGION }}/instanceTemplates/${{ env.INSTANCE_TEMPLATE }}
