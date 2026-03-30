@@ -41,13 +41,27 @@ jobs:
       - name: Connect, Sync Code, and Build
         run: |
           gcloud compute ssh ${{ env.USER_NAME }}@${{ env.VM_NAME }} --zone=${{ env.ZONE }} --command "
-            echo 'Connected successfully!' &&
+            echo 'Connected successfully!'
+          
+            # 1. Force-sync code
             cd Capstone-Project-Services/ &&
             git fetch --all &&
             git reset --hard origin/main &&
             git submodule foreach --recursive 'git clean -fd && git reset --hard' &&
             git submodule update --init --recursive --force &&
-            export PATH=\$PATH:/usr/bin:/usr/local/bin:/opt/maven/bin &&
+          
+            # 2. Fix the PATH manually for this session
+            export PATH=\$PATH:/usr/bin:/usr/local/bin:/opt/maven/bin:/snap/bin
+          
+            # 3. Check if mvn exists, if not, install it quickly
+            if ! command -v mvn &> /dev/null
+            then
+                echo 'Maven not found in PATH, installing...'
+                sudo apt-get update -y && sudo apt-get install -y maven
+            fi
+          
+            # 4. Final Build
+            mvn -version &&
             mvn clean package
           "
 
