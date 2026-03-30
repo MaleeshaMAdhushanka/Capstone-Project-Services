@@ -6,9 +6,11 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
+      VM_NAME: vm-services-seed
       INSTANCE_GROUP: mig-services
       INSTANCE_TEMPLATE: temp-vm-services-seed-v1
       REGION: asia-southeast1
+      ZONE: asia-southeast1-c
       USER_NAME: zeejmaleeshamadushanka
       IMAGE_NAME: vm-services-seed-boot-image
 
@@ -27,72 +29,58 @@ jobs:
       - name: Set up gcloud Cloud SDK environment
         uses: google-github-actions/setup-gcloud@v3.0.1
 
-      - name: Get Dynamic VM and Zone
+      - name: Get Dynamic VM Name and Start Instance
         run: |
-          # Fetch the name and zone, then strip any extra whitespace
-          VM_INFO=$(gcloud compute instance-groups managed list-instances ${{ env.INSTANCE_GROUP }} \
+          # This finds the real name (like mig-services-mj51) so the start command doesn't 404
+          ACTUAL_NAME=$(gcloud compute instance-groups managed list-instances ${{ env.INSTANCE_GROUP }} \
             --region=${{ env.REGION }} \
-            --format="value(instance.scope().basename(),instance.scope().segment(-3))" \
+            --format="value(instance.scope().basename())" \
             --limit=1)
-          
-          VM_NAME=$(echo $VM_INFO | awk '{print $1}')
-          VM_ZONE=$(echo $VM_INFO | awk '{print $2}')
-          
-          echo "Detected Name: $VM_NAME"
-          echo "Detected Zone: $VM_ZONE"
-          
-          echo "VM_NAME=$VM_NAME" >> $GITHUB_ENV
-          echo "VM_ZONE=$VM_ZONE" >> $GITHUB_ENV
+          echo "Detected VM Name: $ACTUAL_NAME"
+          echo "ACTUAL_VM=$ACTUAL_NAME" >> $GITHUB_ENV
+          gcloud compute instances start $ACTUAL_NAME --zone=${{ env.ZONE }}
 
-      - name: Start VM
-        run: gcloud compute instances start ${{ env.VM_NAME }} --zone=${{ env.VM_ZONE }}
-
-      - name: Connect, Sync, and Build
+      - name: Connect, Sync Code, and Build
         run: |
-          gcloud compute ssh ${{ env.USER_NAME }}@${{ env.VM_NAME }} --zone=${{ env.VM_ZONE }} --command "
+          gcloud compute ssh ${{ env.USER_NAME }}@${{ env.ACTUAL_VM }} --zone=${{ env.ZONE }} --command "
             echo 'Connected successfully!'
           
-            # 1. Ensure Java 23 and Maven are installed
+            # 1. Fix environment (Ensures Java 23 and Maven are visible to the script)
             sudo apt-get update -y
             sudo apt-get install -y openjdk-23-jdk maven || sudo apt-get install -y openjdk-21-jdk maven
-          
-            # 2. Force Maven into the PATH for this session
             export PATH=\$PATH:/usr/bin:/usr/local/bin:/usr/share/maven/bin
           
-            # 3. Sync Code
+            # 2. Force-Sync Code (Lecturer code + Force-Reset)
             cd Capstone-Project-Services/ &&
             git fetch --all &&
             git reset --hard origin/main &&
             git submodule foreach --recursive 'git clean -fd && git reset --hard' &&
             git submodule update --init --recursive --force &&
           
-            # 4. Run Build
-            mvn -version &&
+            # 3. Build the project
+            source ~/.bashrc &&
             mvn clean package -DskipTests
           "
 
-      - name: Stop VM
-        run: gcloud compute instances stop ${{ env.VM_NAME }} --zone=${{ env.VM_ZONE }}
+      - name: Stop the instance
+        run: gcloud compute instances stop ${{ env.ACTUAL_VM }} --zone=${{ env.ZONE }}
 
-      - name: Delete old Image
+      - name: Delete the boot disk image
         run: gcloud compute images delete ${{ env.IMAGE_NAME }} --quiet
         continue-on-error: true
 
-      - name: Create new Image
+      - name: Create a new boot disk image
         run: |
           gcloud compute images create ${{ env.IMAGE_NAME }} \
             --project=${{ secrets.GCP_PROJECT_ID }} \
-            --source-disk=${{ env.VM_NAME }} \
-            --source-disk-zone=${{ env.VM_ZONE }} \
+            --source-disk=${{ env.ACTUAL_VM }} \
+            --source-disk-zone=${{ env.ZONE }} \
             --storage-location=${{ env.REGION }}
 
-      - name: Update Managed Instance Group
+      - name: Update the instance group with the new image
         run: |
-          gcloud compute instance-groups managed rolling-action start-update ${{ env.INSTANCE_GROUP }} \
+          gcloud compute instance-groups managed rolling-action replace ${{ env.INSTANCE_GROUP }} \
             --region=${{ env.REGION }} \
-            --type=proactive \
             --max-unavailable=0 \
-            --minimal-action=replace \
             --replacement-method=substitute \
-            --max-surge=3 \
-            --version=template=projects/${{ secrets.GCP_PROJECT_ID }}/regions/${{ env.REGION }}/instanceTemplates/${{ env.INSTANCE_TEMPLATE }}
+            --max-surge=3
