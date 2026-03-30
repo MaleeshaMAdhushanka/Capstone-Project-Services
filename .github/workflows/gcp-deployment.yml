@@ -70,13 +70,17 @@ jobs:
 
       - name: Update the instance group with the new image
         run: |
-          gcloud compute instance-groups managed rolling-action start-update ${{ env.INSTANCE_GROUP }} \
-           --region=${{ env.REGION }} \
-           --type=proactive \
-           --max-unavailable=0 \
-           --minimal-action=replace \
-           --replacement-method=substitute \
-           --max-surge=3 \
-           --version=template=projects/${{ secrets.GCP_PROJECT_ID }}/regions/${{ env.REGION }}/instanceTemplates/${{ env.INSTANCE_TEMPLATE }},name=0-1774819624377 || echo "Instance template not found. Skipping instance group update. Please ensure the template '${{ env.INSTANCE_TEMPLATE }}' exists in your GCP project."
+          if gcloud compute instance-groups managed describe ${{ env.INSTANCE_GROUP }} --region=${{ env.REGION }} &>/dev/null; then
+            gcloud compute instance-groups managed rolling-action start-update ${{ env.INSTANCE_GROUP }} \
+             --region=${{ env.REGION }} \
+             --type=proactive \
+             --max-unavailable=0 \
+             --minimal-action=replace \
+             --replacement-method=substitute \
+             --max-surge=3 \
+             --version=template=projects/${{ secrets.GCP_PROJECT_ID }}/regions/${{ env.REGION }}/instanceTemplates/${{ env.INSTANCE_TEMPLATE }},name=0-1774819624377 || echo "Instance template not found. Please ensure the template '${{ env.INSTANCE_TEMPLATE }}' exists in your GCP project."
+          else
+            echo "Instance group '${{ env.INSTANCE_GROUP }}' not found in region '${{ env.REGION }}'. Skipping instance group update. Create the instance group first if you want to use managed instance updates."
+          fi
         continue-on-error: true
 
