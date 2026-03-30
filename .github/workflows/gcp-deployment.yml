@@ -2,93 +2,91 @@ name: Capstone Project Services - GCP Deployment
 on: push
 
 jobs:
-    deploy:
-        runs-on: ubuntu-latest
+  deploy:
+    runs-on: ubuntu-latest
 
-        env:
-            INSTANCE_GROUP: mig-services
-            INSTANCE_TEMPLATE: temp-vm-services-seed-v1
-            REGION: asia-southeast1
-            USER_NAME: zeejmaleeshamadushanka
-            IMAGE_NAME: vm-services-seed-boot-image
+    env:
+      INSTANCE_GROUP: mig-services
+      INSTANCE_TEMPLATE: temp-vm-services-seed-v1
+      REGION: asia-southeast1
+      USER_NAME: zeejmaleeshamadushanka
+      IMAGE_NAME: vm-services-seed-boot-image
 
-        permissions:
-            contents: 'read'
-            id-token: 'write'
+    permissions:
+      contents: 'read'
+      id-token: 'write'
 
-        steps:
-            - name: Authenticate to Google Cloud
-              uses: google-github-actions/auth@v3
-              with:
-                  workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
-                  service_account: ${{ secrets.GCP_SA_EMAIL }}
-                  project_id: ${{ secrets.GCP_PROJECT_ID }}
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-            - name: Set up gcloud Cloud SDK environment
-              uses: google-github-actions/setup-gcloud@v3.0.1
+      - name: Set up gcloud Cloud SDK environment
+        uses: google-github-actions/setup-gcloud@v3.0.1
 
-            - name: Get Dynamic VM and Zone, then Start
-              run: |
-                  # 1. Fetch the Name AND the Zone from the Instance Group
-                  VM_INFO=$(gcloud compute instance-groups managed list-instances ${{ env.INSTANCE_GROUP }} \
-                    --region=${{ env.REGION }} \
-                    --format="value(instance.scope().basename(),instance.scope().segment(-3))" \
-                    --limit=1)
-                  
-                  # 2. Parse the result (Name is first, Zone is second)
-                  VM_NAME=$(echo $VM_INFO | awk '{print $1}')
-                  VM_ZONE=$(echo $VM_INFO | awk '{print $2}')
-                  
-                  echo "Detected VM Name: $VM_NAME"
-                  echo "Detected VM Zone: $VM_ZONE"
-                  
-                  # 3. Save them to the GitHub Environment
-                  echo "VM_NAME=$VM_NAME" >> $GITHUB_ENV
-                  echo "VM_ZONE=$VM_ZONE" >> $GITHUB_ENV
-                  
-                  # 4. Start the VM using the correct zone
-                  gcloud compute instances start $VM_NAME --zone=$VM_ZONE
+      - name: Get Dynamic VM and Zone
+        run: |
+          # Fetch the name and zone, then strip any extra whitespace
+          VM_INFO=$(gcloud compute instance-groups managed list-instances ${{ env.INSTANCE_GROUP }} \
+            --region=${{ env.REGION }} \
+            --format="value(instance.scope().basename(),instance.scope().segment(-3))" \
+            --limit=1)
+          
+          VM_NAME=$(echo $VM_INFO | awk '{print $1}')
+          VM_ZONE=$(echo $VM_INFO | awk '{print $2}')
+          
+          echo "Detected Name: $VM_NAME"
+          echo "Detected Zone: $VM_ZONE"
+          
+          echo "VM_NAME=$VM_NAME" >> $GITHUB_ENV
+          echo "VM_ZONE=$VM_ZONE" >> $GITHUB_ENV
 
-            - name: Connect, Sync, and Build
-              run: |
-                  gcloud compute ssh ${{ env.USER_NAME }}@${{ env.VM_NAME }} --zone=${{ env.VM_ZONE }} --command "
-                    echo 'Connected successfully!'
-                  
-                    # Ensure JDK 23 is installed (Required for your project)
-                    sudo apt-get update -y
-                    sudo apt-get install -y openjdk-23-jdk maven || sudo apt-get install -y openjdk-21-jdk maven
-                  
-                    cd Capstone-Project-Services/ &&
-                    git fetch --all &&
-                    git reset --hard origin/main &&
-                    git submodule foreach --recursive 'git clean -fd && git reset --hard' &&
-                    git submodule update --init --recursive --force &&
-                  
-                    mvn clean package -DskipTests
-                  "
+      - name: Start VM
+        run: gcloud compute instances start ${{ env.VM_NAME }} --zone=${{ env.VM_ZONE }}
 
-            - name: Stop the VM instance
-              run: gcloud compute instances stop ${{ env.VM_NAME }} --zone=${{ env.VM_ZONE }}
+      - name: Connect, Sync, and Build
+        run: |
+          gcloud compute ssh ${{ env.USER_NAME }}@${{ env.VM_NAME }} --zone=${{ env.VM_ZONE }} --command "
+            echo 'Connected successfully!'
+          
+            # Ensure Java 23 is installed
+            sudo apt-get update -y
+            sudo apt-get install -y openjdk-23-jdk maven || sudo apt-get install -y openjdk-21-jdk maven
+          
+            cd Capstone-Project-Services/ &&
+            git fetch --all &&
+            git reset --hard origin/main &&
+            git submodule foreach --recursive 'git clean -fd && git reset --hard' &&
+            git submodule update --init --recursive --force &&
+          
+            mvn clean package -DskipTests
+          "
 
-            - name: Delete the old boot disk image
-              run: gcloud compute images delete ${{ env.IMAGE_NAME }} --quiet
-              continue-on-error: true
+      - name: Stop VM
+        run: gcloud compute instances stop ${{ env.VM_NAME }} --zone=${{ env.VM_ZONE }}
 
-            - name: Create a new boot disk image
-              run: |
-                  gcloud compute images create ${{ env.IMAGE_NAME }} \
-                    --project=${{ secrets.GCP_PROJECT_ID }} \
-                    --source-disk=${{ env.VM_NAME }} \
-                    --source-disk-zone=${{ env.VM_ZONE }} \
-                    --storage-location=${{ env.REGION }}
+      - name: Delete old Image
+        run: gcloud compute images delete ${{ env.IMAGE_NAME }} --quiet
+        continue-on-error: true
 
-            - name: Update the instance group
-              run: |
-                  gcloud compute instance-groups managed rolling-action start-update ${{ env.INSTANCE_GROUP }} \
-                    --region=${{ env.REGION }} \
-                    --type=proactive \
-                    --max-unavailable=0 \
-                    --minimal-action=replace \
-                    --replacement-method=substitute \
-                    --max-surge=3 \
-                    --version=template=projects/${{ secrets.GCP_PROJECT_ID }}/regions/${{ env.REGION }}/instanceTemplates/${{ env.INSTANCE_TEMPLATE }}
+      - name: Create new Image
+        run: |
+          gcloud compute images create ${{ env.IMAGE_NAME }} \
+            --project=${{ secrets.GCP_PROJECT_ID }} \
+            --source-disk=${{ env.VM_NAME }} \
+            --source-disk-zone=${{ env.VM_ZONE }} \
+            --storage-location=${{ env.REGION }}
+
+      - name: Update Managed Instance Group
+        run: |
+          gcloud compute instance-groups managed rolling-action start-update ${{ env.INSTANCE_GROUP }} \
+            --region=${{ env.REGION }} \
+            --type=proactive \
+            --max-unavailable=0 \
+            --minimal-action=replace \
+            --replacement-method=substitute \
+            --max-surge=3 \
+            --version=template=projects/${{ secrets.GCP_PROJECT_ID }}/regions/${{ env.REGION }}/instanceTemplates/${{ env.INSTANCE_TEMPLATE }}
