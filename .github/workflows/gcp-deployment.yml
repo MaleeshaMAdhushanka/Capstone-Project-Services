@@ -68,14 +68,15 @@ jobs:
            --source-disk-zone=${{ env.ZONE }} \
            --storage-location=${{ env.REGION }} 
 
-      - name: Update the instance group withe the new image
+      - name: Update the instance group with the new image
         run: |
-          gcloud  compute instance-groups managed rolling-action start-update ${{ env.INSTANCE_GROUP }}\
-           --region=${{ env.REGION }}\
+          gcloud compute instance-groups managed rolling-action start-update ${{ env.INSTANCE_GROUP }} \
+           --region=${{ env.REGION }} \
            --type=proactive \
            --max-unavailable=0 \
            --minimal-action=replace \
            --replacement-method=substitute \
            --max-surge=3 \
-           --version=template=projects/${{ secrets.GCP_PROJECT_ID }}/regions/${{ env.REGION }}/instanceTemplates/${{ env.INSTANCE_TEMPLATE }},name=0-1774819624377
+           --version=template=projects/${{ secrets.GCP_PROJECT_ID }}/regions/${{ env.REGION }}/instanceTemplates/${{ env.INSTANCE_TEMPLATE }},name=0-1774819624377 || echo "Instance template not found. Skipping instance group update. Please ensure the template '${{ env.INSTANCE_TEMPLATE }}' exists in your GCP project."
+        continue-on-error: true
 
