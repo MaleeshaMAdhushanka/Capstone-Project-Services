@@ -10,7 +10,7 @@ jobs:
       INSTANCE_GROUP: mig-services
       INSTANCE_TEMPLATE: temp-vm-services-seed
       REGION: asia-southeast1
-      ZONE: asia-southeast1-c
+      ZONE: asia-southeast1-a
       USER_NAME: zeejmaleeshamadushanka
       IMAGE_NAME: vm-services-seed-boot-image-v2
 
