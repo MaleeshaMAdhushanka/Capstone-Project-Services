@@ -37,9 +37,10 @@ jobs:
           gcloud compute ssh ${{ env.USER_NAME }}@${{env.VM_NAME }} --zone=${{ env.ZONE }}
           --command "echo 'Connected to vm-services-seed successfully!' &&
           cd Capstone-Project-Services/ &&
-          git reset --hard HEAD &&
+          git fetch --all &&
+          git reset --hard origin/main &&
           git clean -fdx --recurse-submodules &&
-          git pull --recurse-submodules &&
+          git submodule update --init --recursive --force &&
           source ~/.bashrc &&
           mvn clean package &&
           pm2 start ecosystem.config.js &&
