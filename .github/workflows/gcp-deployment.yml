@@ -39,7 +39,8 @@ jobs:
           cd Capstone-Project-Services/ &&
           git fetch --all &&
           git reset --hard origin/main &&
-          git clean -fdx --recurse-submodules &&
+          git clean -fdx &&
+          git submodule foreach --recursive git clean -fdx &&
           git submodule update --init --recursive --force &&
           source ~/.bashrc &&
           mvn clean package &&
