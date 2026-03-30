@@ -1,16 +1,18 @@
-name: Capstone Project Services - GCP Deployment
-on: push
+name: Capstone Project Services-GCP Deployment
+on:  push
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     env:
+      VM_NAME: vm-services-seed
       INSTANCE_GROUP: mig-services
-      INSTANCE_TEMPLATE: temp-vm-services-seed-v1
+      INSTANCE_TEMPLATE: temp-vm-services-seed
       REGION: asia-southeast1
+      ZONE: asia-southeast1-c
       USER_NAME: zeejmaleeshamadushanka
-      IMAGE_NAME: vm-services-seed-boot-image
+      IMAGE_NAME: vm-services-seed-boot-image-v2
 
     permissions:
       contents: 'read'
@@ -27,69 +29,50 @@ jobs:
       - name: Set up gcloud Cloud SDK environment
         uses: google-github-actions/setup-gcloud@v3.0.1
 
-      - name: Get Dynamic VM and Real Zone
-        run: |
-          # 1. Fetch Name AND the Zone from the Instance Group
-          VM_INFO=$(gcloud compute instance-groups managed list-instances ${{ env.INSTANCE_GROUP }} \
-            --region=${{ env.REGION }} \
-            --format="value(instance.scope().basename(),instance.scope().segment(-3))" \
-            --limit=1)
-          
-          # 2. Parse the result
-          VM_NAME=$(echo $VM_INFO | awk '{print $1}')
-          VM_ZONE=$(echo $VM_INFO | awk '{print $2}')
-          
-          echo "Detected VM: $VM_NAME"
-          echo "Detected Zone: $VM_ZONE"
-          
-          # 3. Export to environment for next steps
-          echo "VM_NAME=$VM_NAME" >> $GITHUB_ENV
-          echo "VM_ZONE=$VM_ZONE" >> $GITHUB_ENV
+      - name: Start the vm-services-seed instance
+        run: gcloud compute instances start ${{ env.VM_NAME }} --zone=${{ env.ZONE }}
 
-      - name: Start Instance in Correct Zone
-        run: gcloud compute instances start ${{ env.VM_NAME }} --zone=${{ env.VM_ZONE }}
-
-      - name: Connect, Sync, and Build
-        run: |
-          gcloud compute ssh ${{ env.USER_NAME }}@${{ env.VM_NAME }} --zone=${{ env.VM_ZONE }} --command "
-            echo 'Connected successfully!'
-          
-            # 1. Ensure Java 23 and Maven are installed
-            sudo apt-get update -y
-            sudo apt-get install -y openjdk-23-jdk maven || sudo apt-get install -y openjdk-21-jdk maven
-          
-            # 2. Force Path for this session
-            export PATH=\$PATH:/usr/bin:/usr/local/bin:/usr/share/maven/bin
-          
-            # 3. Code Sync (Force-Reset Logic)
-            cd Capstone-Project-Services/ || exit
-            git fetch --all
-            git reset --hard origin/main
-            git submodule foreach --recursive 'git clean -fd && git reset --hard'
-            git submodule update --init --recursive --force
-          
-            # 4. Final Build using Absolute Path
-            /usr/bin/mvn clean package -DskipTests
+      - name: Connect with the vm-services-seed instance through SSH, pull the latest code and build the project
+        run: >
+          gcloud compute ssh ${{ env.USER_NAME }}@${{env.VM_NAME }} --zone=${{ env.ZONE }}
+          --command "echo 'Connected to vm-services-seed successfully!' &&
+          cd Capstone-Project-Services/ &&
+          git pull --recurse-submodules &&
+          source ~/.bashrc &&
+          mvn clean package &&
+          pm2 start ecosystem.config.js &&
+          pm2 save
           "
 
-      - name: Stop Instance
-        run: gcloud compute instances stop ${{ env.VM_NAME }} --zone=${{ env.VM_ZONE }}
+      - name: Stop the vm-services-seed  instance
+        run: gcloud compute instances stop ${{ env.VM_NAME }} --zone=${{ env.ZONE }}
 
-      - name: Create New Image
-        run: |
-          # Delete old image if it exists to prevent 'already exists' error
-          gcloud compute images delete ${{ env.IMAGE_NAME }} --quiet || true
-          
-          gcloud compute images create ${{ env.IMAGE_NAME }} \
-            --project=${{ secrets.GCP_PROJECT_ID }} \
-            --source-disk=${{ env.VM_NAME }} \
-            --source-disk-zone=${{ env.VM_ZONE }} \
-            --storage-location=${{ env.REGION }}
+      - name: Delete the boot disk image
+        run: gcloud compute images delete ${{ env.IMAGE_NAME }}
+        continue-on-error: true
 
-      - name: Update Instance Group
+      - name: Create a new boot disk image with the previous image name
         run: |
-          gcloud compute instance-groups managed rolling-action replace ${{ env.INSTANCE_GROUP }} \
-            --region=${{ env.REGION }} \
-            --max-unavailable=0 \
-            --replacement-method=substitute \
-            --max-surge=3
+          gcloud compute images create ${{ env.IMAGE_NAME}}  \
+           --project=hdse-capstone \
+           --source-disk=${{ env.VM_NAME }} \
+           --source-disk-zone=${{ env.ZONE }} \
+           --storage-location=${{ env.REGION }} 
+
+      - name: Update the instance group withe the new image
+        run: |
+          gcloud  compute instance-groups managed rolling-action start-update ${{ env.INSTANCE_GROUP }}\
+           --region=${{ env.REGION }}\
+           --type=proactive \
+           --max-unavailable=0 \
+           --minimal-action=replace \
+           --replacement-method=substitute \
+           --max-surge=3 \
+           --version=template=projects/${{ secrets.GCP_PROJECT_ID }}/regions/${{ env.REGION }}/instanceTemplates/${{ env.INSTANCE_TEMPLATE }},name=0-1774819624377
+
+
+
+
+
+
+
