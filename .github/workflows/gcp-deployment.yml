@@ -44,7 +44,12 @@ jobs:
           git submodule update --init --recursive --force &&
           source ~/.bashrc &&
           mvn clean package &&
+          pm2 kill &&
+          sleep 2 &&
+          pm2 delete all || true &&
+          sleep 1 &&
           pm2 start ecosystem.config.js &&
+          sleep 2 &&
           pm2 save
           "
 
