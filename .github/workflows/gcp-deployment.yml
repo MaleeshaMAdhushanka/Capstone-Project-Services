@@ -52,16 +52,22 @@ jobs:
           gcloud compute ssh ${{ env.USER_NAME }}@${{ env.VM_NAME }} --zone=${{ env.VM_ZONE }} --command "
             echo 'Connected successfully!'
           
-            # Ensure Java 23 is installed
+            # 1. Ensure Java 23 and Maven are installed
             sudo apt-get update -y
             sudo apt-get install -y openjdk-23-jdk maven || sudo apt-get install -y openjdk-21-jdk maven
           
+            # 2. Force Maven into the PATH for this session
+            export PATH=\$PATH:/usr/bin:/usr/local/bin:/usr/share/maven/bin
+          
+            # 3. Sync Code
             cd Capstone-Project-Services/ &&
             git fetch --all &&
             git reset --hard origin/main &&
             git submodule foreach --recursive 'git clean -fd && git reset --hard' &&
             git submodule update --init --recursive --force &&
           
+            # 4. Run Build
+            mvn -version &&
             mvn clean package -DskipTests
           "
 
